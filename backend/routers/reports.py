@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from core.database import get_db_pool
-from workers.report_tasks import generate_report as generate_report_task
+from workers.report_tasks import generate_report_task
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -27,7 +27,7 @@ async def generate_report(request: GenerateReportRequest) -> dict[str, Any]:
             request.period_id,
         )
 
-    generate_report_task.apply_async(args=[request.period_id], task_id=str(job_id))
+    generate_report_task.apply_async(args=[str(job_id), request.period_id], task_id=str(job_id))
     return {"job_id": str(job_id), "status": "pending"}
 
 

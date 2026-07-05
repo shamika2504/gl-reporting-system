@@ -38,6 +38,11 @@ async def get_db_pool() -> asyncpg.Pool:
     return _pool
 
 
+async def get_connection() -> asyncpg.Connection:
+    settings = get_settings()
+    return await asyncpg.connect(dsn=settings.database_dsn)
+
+
 async def initialize_schema() -> None:
     pool = await get_db_pool()
     sql_path = Path(__file__).resolve().parents[2] / "scripts" / "init_db.sql"

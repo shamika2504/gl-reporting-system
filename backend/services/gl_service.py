@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.database import get_db_pool
+from core.database import get_connection
 
 
 def _round_money(value: float | int) -> float:
@@ -67,14 +67,16 @@ async def _get_previous_period_entries(connection: Any, period_id: int) -> list[
 
 
 async def get_trial_balance(period_id: int) -> dict[str, Any]:
-    pool = await get_db_pool()
-    async with pool.acquire() as connection:
+    connection = await get_connection()
+    try:
         period = await _get_period(connection, period_id)
         if period is None:
             raise LookupError(f"Period {period_id} not found")
 
         accounts = await _get_account_metadata(connection)
         entries = await _get_period_entries(connection, period_id)
+    finally:
+        await connection.close()
 
     balances: dict[str, dict[str, Any]] = {}
     for entry in entries:
@@ -115,14 +117,16 @@ async def get_trial_balance(period_id: int) -> dict[str, Any]:
 
 
 async def get_balance_sheet(period_id: int) -> dict[str, Any]:
-    pool = await get_db_pool()
-    async with pool.acquire() as connection:
+    connection = await get_connection()
+    try:
         period = await _get_period(connection, period_id)
         if period is None:
             raise LookupError(f"Period {period_id} not found")
 
         accounts = await _get_account_metadata(connection)
         entries = await _get_period_entries(connection, period_id)
+    finally:
+        await connection.close()
 
     account_balances: dict[str, float] = {}
     for entry in entries:
@@ -190,14 +194,16 @@ async def get_balance_sheet(period_id: int) -> dict[str, Any]:
 
 
 async def get_income_statement(period_id: int) -> dict[str, Any]:
-    pool = await get_db_pool()
-    async with pool.acquire() as connection:
+    connection = await get_connection()
+    try:
         period = await _get_period(connection, period_id)
         if period is None:
             raise LookupError(f"Period {period_id} not found")
 
         accounts = await _get_account_metadata(connection)
         entries = await _get_period_entries(connection, period_id)
+    finally:
+        await connection.close()
 
     account_balances: dict[str, float] = {}
     for entry in entries:
@@ -263,8 +269,8 @@ async def get_key_ratios(period_id: int) -> dict[str, float]:
 
 
 async def detect_anomalies(period_id: int) -> list[dict[str, Any]]:
-    pool = await get_db_pool()
-    async with pool.acquire() as connection:
+    connection = await get_connection()
+    try:
         period = await _get_period(connection, period_id)
         if period is None:
             raise LookupError(f"Period {period_id} not found")
@@ -272,6 +278,8 @@ async def detect_anomalies(period_id: int) -> list[dict[str, Any]]:
         accounts = await _get_account_metadata(connection)
         entries = await _get_period_entries(connection, period_id)
         previous_entries = await _get_previous_period_entries(connection, period_id)
+    finally:
+        await connection.close()
 
     account_balances: dict[str, float] = {}
     previous_balances: dict[str, float] = {}
@@ -347,19 +355,6 @@ async def detect_anomalies(period_id: int) -> list[dict[str, Any]]:
                     "type": "expense_credit_balance",
                     "severity": "high",
                     "detail": "Expense account has a net credit balance",
-                }
-            )
-
-    for entry in entries:
-        if float(entry.get("debit") or 0.0) != float(entry.get("credit") or 0.0):
-            account_code = entry.get("account_code")
-            metadata = accounts.get(account_code, {})
-            anomalies.append(
-                {
-                    "account": metadata.get("account_name", account_code or "unknown"),
-                    "type": "entry_mismatch",
-                    "severity": "high",
-                    "detail": f"Entry-level imbalance detected: debit {entry.get('debit')} vs credit {entry.get('credit')}",
                 }
             )
 

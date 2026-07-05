@@ -44,6 +44,7 @@ services:
       DATABASE_NAME: gl_reporting
       DATABASE_USER: gl_user
       DATABASE_PASSWORD: gl_password
+      DATABASE_URL: postgres://gl_user:gl_password@postgres:5432/gl_reporting
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
       AWS_REGION: us-east-1
@@ -76,6 +77,7 @@ services:
       DATABASE_NAME: gl_reporting
       DATABASE_USER: gl_user
       DATABASE_PASSWORD: gl_password
+      DATABASE_URL: postgres://gl_user:gl_password@postgres:5432/gl_reporting
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
       AWS_REGION: us-east-1

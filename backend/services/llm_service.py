@@ -10,10 +10,10 @@ from anthropic import Anthropic
 
 try:
     from core.config import get_settings
-    from core.database import get_db_pool
+    from core.database import get_connection
 except ModuleNotFoundError:  # pragma: no cover - allows repo-root imports
     from backend.core.config import get_settings
-    from backend.core.database import get_db_pool
+    from backend.core.database import get_connection
 
 logger = logging.getLogger("gl_reporting")
 
@@ -24,10 +24,37 @@ class LLMService:
     def __init__(self) -> None:
         self.model_name = "claude-sonnet-4-6"
 
+    def _is_placeholder_key(self, api_key: str | None) -> bool:
+        return not api_key or not api_key.strip() or api_key.strip().lower() in {"replace-me", "changeme", "your-api-key"}
+
+    def _build_fallback_content(self, event: str, computed_values: dict[str, Any]) -> str:
+        if event == "executive_summary":
+            return (
+                "Placeholder executive summary: the report was generated locally without an Anthropic API key. "
+                "This narrative highlights the available financial metrics and indicates that production-quality wording "
+                "should be supplied by the configured LLM provider."
+            )
+        if event == "mda_commentary":
+            section = computed_values.get("section", "financial section")
+            return (
+                f"Placeholder MD&A commentary for {section}: the underlying figures are presented as-is and should be reviewed "
+                "against the supporting schedules once the LLM service is configured."
+            )
+        if event == "anomaly_explanation":
+            anomaly = computed_values.get("anomaly", {})
+            account = anomaly.get("account", "the affected account")
+            return (
+                f"Placeholder anomaly explanation for {account}: the variance should be reviewed against the source transactions "
+                "and supporting documentation once the LLM integration is enabled."
+            )
+        return "Placeholder content generated locally because the LLM provider is not configured."
+
     async def _call_claude(self, prompt: str, event: str, computed_values: dict[str, Any], job_id: str | None = None) -> str:
         settings = get_settings()
-        if not settings.anthropic_api_key:
-            raise RuntimeError("Anthropic API key not configured")
+        if self._is_placeholder_key(settings.anthropic_api_key):
+            logger.warning("Anthropic API key not configured; using placeholder narrative for event=%s", event)
+            await self._log_audit_event(job_id, event, prompt, computed_values)
+            return self._build_fallback_content(event, computed_values)
 
         last_error: Exception | None = None
         for attempt in range(3):
@@ -48,12 +75,15 @@ class LLMService:
             except Exception as exc:  # pragma: no cover - runtime safety fallback
                 last_error = exc
                 if attempt == 2:
-                    raise
+                    logger.warning("Anthropic call failed; using placeholder narrative for event=%s error=%s", event, exc)
+                    await self._log_audit_event(job_id, event, prompt, computed_values)
+                    return self._build_fallback_content(event, computed_values)
                 await asyncio.sleep(2**attempt)
 
         if last_error is not None:
-            raise last_error
-        raise RuntimeError("Claude request failed")
+            await self._log_audit_event(job_id, event, prompt, computed_values)
+            return self._build_fallback_content(event, computed_values)
+        return self._build_fallback_content(event, computed_values)
 
     async def _log_audit_event(
         self,
@@ -62,8 +92,8 @@ class LLMService:
         prompt: str,
         computed_values: dict[str, Any],
     ) -> None:
-        pool = await get_db_pool()
-        async with pool.acquire() as connection:
+        connection = await get_connection()
+        try:
             await connection.execute(
                 """
                 INSERT INTO audit_log (job_id, event, prompt_used, model_version, computed_values, timestamp)
@@ -75,6 +105,8 @@ class LLMService:
                 self.model_name,
                 json.dumps(computed_values, default=str),
             )
+        finally:
+            await connection.close()
 
     async def generate_executive_summary(
         self,

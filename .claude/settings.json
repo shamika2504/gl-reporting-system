@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s http://localhost:8000/reports/status/957fb519-b6fb-4003-bcc2-43b0155e6b51)"
+    ]
+  }
+}
