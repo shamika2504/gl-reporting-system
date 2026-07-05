@@ -36,6 +36,8 @@ services:
       dockerfile: backend/Dockerfile
     working_dir: /app/backend
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    env_file:
+      - .env
     environment:
       DATABASE_HOST: postgres
       DATABASE_PORT: 5432
@@ -46,6 +48,8 @@ services:
       QDRANT_URL: http://qdrant:6333
       AWS_REGION: us-east-1
       AWS_S3_BUCKET: gl-reporting-dev
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     ports:
       - "8000:8000"
     depends_on:
@@ -64,6 +68,8 @@ services:
       dockerfile: backend/Dockerfile
     working_dir: /app/backend
     command: celery -A workers.celery_app worker --loglevel=info
+    env_file:
+      - .env
     environment:
       DATABASE_HOST: postgres
       DATABASE_PORT: 5432
@@ -74,6 +80,8 @@ services:
       QDRANT_URL: http://qdrant:6333
       AWS_REGION: us-east-1
       AWS_S3_BUCKET: gl-reporting-dev
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

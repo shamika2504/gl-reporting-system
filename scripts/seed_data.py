@@ -11,7 +11,11 @@ import asyncpg
 from faker import Faker
 from dotenv import load_dotenv
 
-sys.path.append(str(Path(__file__).resolve().parents[1] / "backend"))
+script_path = Path(__file__).resolve()
+backend_dir = script_path.parent.parent / "backend"
+if not (backend_dir / "core").exists():
+    backend_dir = script_path.parent.parent
+sys.path.append(str(backend_dir))
 
 from core.config import get_settings  # noqa: E402
 

@@ -20,6 +20,7 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-6"
+    openai_api_key: str = ""
 
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
@@ -27,7 +28,11 @@ class Settings(BaseSettings):
     aws_s3_bucket: str = "gl-reporting-dev"
     aws_secrets_manager_secret_id: str = "gl-reporting/dev"
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=[".env", "/app/.env", "/app/backend/.env"],
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     @property
     def database_dsn(self) -> str:
