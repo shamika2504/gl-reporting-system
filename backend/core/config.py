@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-sonnet-4-6"
     openai_api_key: str = ""
 
+    langchain_api_key: str = ""
+    langchain_tracing_v2: bool = False
+    langchain_project: str = "gl-reporting-prod"
+
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
     aws_region: str = "us-east-1"

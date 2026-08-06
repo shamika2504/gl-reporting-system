@@ -1,0 +1,106 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # required for OIDC -> AWS role assumption
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  EKS_CLUSTER_NAME: gl-reporting-cluster
+  ECR_REPOSITORY: gl-reporting-backend
+  K8S_NAMESPACE: gl-reporting
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        id: build
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker build -f backend/Dockerfile -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Set deployment image tag
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+        run: |
+          sed -i "s|image: .*gl-reporting-backend.*|image: $IMAGE|" k8s/backend-deployment.yaml
+          sed -i "s|image: .*gl-reporting-backend.*|image: $IMAGE|" k8s/worker-deployment.yaml
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
+
+      - name: Apply manifests
+        run: kubectl apply -f k8s/
+
+      - name: Wait for backend rollout
+        run: kubectl rollout status deployment/backend -n "$K8S_NAMESPACE" --timeout=300s
+
+      - name: Wait for worker rollout
+        run: kubectl rollout status deployment/worker -n "$K8S_NAMESPACE" --timeout=300s
+
+      - name: Health check
+        run: |
+          HOSTNAME=""
+          for i in $(seq 1 30); do
+            HOSTNAME=$(kubectl get ingress backend-ingress -n "$K8S_NAMESPACE" \
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+            [ -n "$HOSTNAME" ] && break
+            echo "Waiting for ALB hostname to be assigned... ($i/30)"
+            sleep 10
+          done
+          if [ -z "$HOSTNAME" ]; then
+            echo "Ingress never got an ALB hostname"
+            exit 1
+          fi
+
+          for i in $(seq 1 15); do
+            if curl -sf "http://$HOSTNAME/health"; then
+              echo ""
+              echo "Health check passed against http://$HOSTNAME/health"
+              exit 0
+            fi
+            echo "Waiting for backend to answer /health... ($i/15)"
+            sleep 10
+          done
+          echo "Health check failed"
+          exit 1
+
+      - name: Deployment summary
+        if: always()
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+        run: |
+          {
+            echo "### Deployment Summary"
+            echo "- Image: \`$IMAGE\`"
+            echo "- Commit: \`${{ github.sha }}\`"
+            echo "- Triggered by: ${{ github.actor }}"
+            echo "- Result: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"

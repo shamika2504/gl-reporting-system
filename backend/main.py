@@ -3,6 +3,7 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from core.config import get_settings
 from core.database import close_db, init_db, initialize_schema
@@ -22,6 +23,8 @@ async def lifespan(app: FastAPI):
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+
+Instrumentator().instrument(app).expose(app)
 
 
 @app.middleware("http")

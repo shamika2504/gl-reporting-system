@@ -7,6 +7,8 @@ import time
 from typing import Any
 
 from anthropic import Anthropic
+from langsmith import traceable
+from langsmith.run_helpers import get_current_run_tree
 
 try:
     from core.config import get_settings
@@ -49,8 +51,14 @@ class LLMService:
             )
         return "Placeholder content generated locally because the LLM provider is not configured."
 
+    @traceable(run_type="llm", name="anthropic_claude_call")
     async def _call_claude(self, prompt: str, event: str, computed_values: dict[str, Any], job_id: str | None = None) -> str:
         settings = get_settings()
+        run_tree = get_current_run_tree()
+        if run_tree is not None:
+            run_tree.name = event
+            run_tree.metadata.update({"call_type": event, "job_id": job_id, "model_version": self.model_name})
+
         if self._is_placeholder_key(settings.anthropic_api_key):
             logger.warning("Anthropic API key not configured; using placeholder narrative for event=%s", event)
             await self._log_audit_event(job_id, event, prompt, computed_values)
@@ -71,6 +79,8 @@ class LLMService:
                 await self._log_audit_event(job_id, event, prompt, computed_values)
                 latency_ms = round((time.perf_counter() - start) * 1000, 2)
                 logger.info("llm_call_complete job_id=%s latency_ms=%.2f", job_id or "none", latency_ms)
+                if run_tree is not None:
+                    run_tree.metadata["latency_ms"] = latency_ms
                 return content
             except Exception as exc:  # pragma: no cover - runtime safety fallback
                 last_error = exc

@@ -14,3 +14,6 @@ pydyf==0.10.0
 qdrant-client==1.13.0
 faker==33.0.0
 python-dotenv==1.0.1
+langsmith==0.1.147
+prometheus-fastapi-instrumentator==7.0.0
+prometheus-client==0.21.0

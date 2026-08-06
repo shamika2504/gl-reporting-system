@@ -191,6 +191,9 @@ section_secrets() {
   "REDIS_URL": "redis://${REDIS_ENDPOINT}:6379/0",
   "ANTHROPIC_API_KEY": "replace-me",
   "OPENAI_API_KEY": "replace-me",
+  "LANGCHAIN_API_KEY": "replace-me",
+  "LANGCHAIN_TRACING_V2": "false",
+  "LANGCHAIN_PROJECT": "gl-reporting-prod",
   "S3_BUCKET_NAME": "${S3_BUCKET}"
 }
 JSON
@@ -198,8 +201,7 @@ JSON
     --region "$REGION"
 
   echo "Secret created at $SECRET_ID."
-  echo "Replace the ANTHROPIC_API_KEY / OPENAI_API_KEY placeholders with real values:"
-  echo "  aws secretsmanager put-secret-value --secret-id $SECRET_ID --secret-string file://secret.json --region $REGION"
+  echo "Replace the placeholder keys with real values using a read-modify-write (see README's Secrets Manager section) — put-secret-value replaces the whole blob, so don't overwrite it with a partial JSON file."
 }
 
 # GitHub Actions -> AWS auth via OIDC (no long-lived access keys).

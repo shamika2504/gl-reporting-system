@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
 from typing import Any
+
+from prometheus_client import Counter, Histogram
 
 from workers.celery_app import celery_app
 from workers.db import get_worker_connection
@@ -13,6 +16,23 @@ from services.gl_service import detect_anomalies, get_balance_sheet, get_income_
 from services.llm_service import LLMService
 from services.pdf_service import PDFService
 from services.s3_service import S3Service
+
+reports_generated = Counter(
+    "reports_generated_total",
+    "Total reports generated",
+    ["status"],  # success/failed
+)
+
+report_generation_duration = Histogram(
+    "report_generation_duration_seconds",
+    "Time to generate full report",
+)
+
+llm_calls_total = Counter(
+    "llm_calls_total",
+    "Total LLM calls made",
+    ["call_type"],  # executive_summary/mda/anomaly
+)
 
 
 async def _log_progress(job_id: str, event: str, details: dict[str, Any] | None = None) -> None:
@@ -131,6 +151,7 @@ async def _run_report_pipeline(job_id: str, period_id: int) -> dict[str, Any]:
         relevant_rules_balance + relevant_rules_income + relevant_rules_ratios,
         job_id,
     )
+    llm_calls_total.labels(call_type="executive_summary").inc()
     await _log_progress(job_id, "executive_summary_generated", {"length": len(executive_summary)})
 
     mda_commentary: dict[str, Any] = {}
@@ -148,6 +169,7 @@ async def _run_report_pipeline(job_id: str, period_id: int) -> dict[str, Any]:
             job_id,
         )
         mda_commentary[section_name] = commentary
+        llm_calls_total.labels(call_type="mda").inc()
     await _log_progress(job_id, "mda_commentary_generated", {"sections": list(mda_commentary.keys())})
 
     anomaly_explanations = await llm_service.generate_anomaly_explanations(
@@ -155,6 +177,7 @@ async def _run_report_pipeline(job_id: str, period_id: int) -> dict[str, Any]:
         relevant_rules_anomalies,
         job_id,
     )
+    llm_calls_total.labels(call_type="anomaly").inc(len(anomaly_explanations))
     await _log_progress(job_id, "anomaly_explanations_generated", {"count": len(anomaly_explanations)})
 
     audit_entries = await _fetch_audit_entries(job_id)
@@ -182,10 +205,16 @@ async def _run_report_pipeline(job_id: str, period_id: int) -> dict[str, Any]:
 
 @celery_app.task(bind=True, max_retries=3, name="generate_report_task")
 def generate_report_task(self, job_id: str, period_id: int) -> dict[str, Any]:
+    start = time.perf_counter()
     try:
-        return asyncio.run(_run_report_pipeline(job_id, period_id))
+        result = asyncio.run(_run_report_pipeline(job_id, period_id))
+        report_generation_duration.observe(time.perf_counter() - start)
+        reports_generated.labels(status="success").inc()
+        return result
     except Exception as exc:
         asyncio.run(_set_job_status(job_id, "failed", error_message=str(exc)))
         if self.request.retries < self.max_retries:
             raise self.retry(exc=exc, countdown=2**self.request.retries)
+        report_generation_duration.observe(time.perf_counter() - start)
+        reports_generated.labels(status="failed").inc()
         raise
