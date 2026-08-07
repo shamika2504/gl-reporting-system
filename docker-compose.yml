@@ -71,7 +71,9 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     working_dir: /app/backend
-    command: celery -A workers.celery_app worker --loglevel=info
+    command: celery -A workers.celery_app worker --loglevel=info --pool=threads --concurrency=4
+    ports:
+      - "9100:9100"
     env_file:
       - .env
     environment:
