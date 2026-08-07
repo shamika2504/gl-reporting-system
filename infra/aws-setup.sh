@@ -249,6 +249,32 @@ EOF
     --role-name gl-reporting-github-actions \
     --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser
 
+  # eks:DescribeCluster — required for `aws eks update-kubeconfig` in the
+  # deploy workflow to even fetch cluster connection info. This is a plain
+  # IAM permission, separate from (and a prerequisite for) the EKS access
+  # entry granted below, which only governs in-cluster Kubernetes RBAC once
+  # the role can already reach the control plane API.
+  cat > /tmp/gl-reporting-eks-describe-policy.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["eks:DescribeCluster"],
+      "Resource": "arn:aws:eks:${REGION}:${ACCOUNT_ID}:cluster/${EKS_CLUSTER_NAME}"
+    }
+  ]
+}
+EOF
+  aws iam create-policy \
+    --policy-name GLReportingEKSDescribePolicy \
+    --policy-document file:///tmp/gl-reporting-eks-describe-policy.json \
+    --region "$REGION" || echo "Policy may already exist — continuing."
+
+  aws iam attach-role-policy \
+    --role-name gl-reporting-github-actions \
+    --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/GLReportingEKSDescribePolicy"
+
   echo "Role ARN: arn:aws:iam::${ACCOUNT_ID}:role/gl-reporting-github-actions"
   echo "Store this as the AWS_DEPLOY_ROLE_ARN secret in the GitHub repo."
   echo ""
