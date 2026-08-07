@@ -7,6 +7,12 @@ metadata:
     app: gl-reporting-worker
 spec:
   replicas: 1
+  # A single Celery worker doesn't need zero-downtime rolling updates the way
+  # the backend API does — Recreate avoids ever needing 2x replicas' worth of
+  # CPU/memory at once, which the single-node dev cluster doesn't have room
+  # for (RollingUpdate's surge pod would sit Pending with Insufficient cpu).
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: gl-reporting-worker
