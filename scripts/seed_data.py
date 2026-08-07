@@ -63,7 +63,7 @@ async def seed_accounts(connection: asyncpg.Connection) -> list[dict[str, Any]]:
         """,
         [(row["account_code"], row["account_name"], row["category"], row["sub_category"], row["normal_balance"]) for row in rows],
     )
-    accounts = await connection.fetch("SELECT account_code, category, normal_balance FROM chart_of_accounts")
+    accounts = await connection.fetch("SELECT account_code, account_name, category, normal_balance FROM chart_of_accounts")
     return [dict(account) for account in accounts]
 
 
@@ -82,50 +82,78 @@ async def seed_periods(connection: asyncpg.Connection) -> None:
     )
 
 
+def _pick(accounts: list[dict[str, Any]], category: str, exclude_name: str | None = None) -> dict[str, Any]:
+    pool = [a for a in accounts if a["category"] == category and a.get("account_name") != exclude_name]
+    return random.choice(pool)
+
+
 async def seed_journal_entries(connection: asyncpg.Connection, accounts: list[dict[str, Any]]) -> None:
-    total_rows = 50_000
+    # Retained Earnings is a derived figure (see balance_retained_earnings),
+    # not randomly generated — every other account participates in ordinary
+    # transaction activity below.
+    postable_accounts = [a for a in accounts if a["account_name"] != "Retained Earnings"]
+    cash_account = next(a for a in accounts if a["account_name"] == "Cash")
+    ar_account = next(a for a in accounts if a["account_name"] == "Accounts Receivable")
+    ap_account = next(a for a in accounts if a["account_name"] == "Accounts Payable")
+
+    total_events = 25_000
     batch_size = 2_000
     start_date = date(2025, 1, 1)
     end_date = date(2025, 6, 30)
 
-    for batch_index in range(0, total_rows, batch_size):
-        rows: list[tuple[date, str, str, float, float, str, int]] = []
-        for _ in range(min(batch_size, total_rows - batch_index)):
-            account = random.choice(accounts)
-            category = account["category"]
-            amount = round(random.uniform(100.0, 15_000.0), 2)
-            if category == "revenue":
-                debit = 0.0
-                credit = amount
-            elif category == "expense":
-                debit = amount
-                credit = 0.0
-            elif category == "asset":
-                if random.random() < 0.8:
-                    debit = amount
-                    credit = 0.0
-                else:
-                    debit = 0.0
-                    credit = amount
-            elif category == "liability":
-                if random.random() < 0.8:
-                    debit = 0.0
-                    credit = amount
-                else:
-                    debit = amount
-                    credit = 0.0
-            else:
-                if random.random() < 0.8:
-                    debit = 0.0
-                    credit = amount
-                else:
-                    debit = amount
-                    credit = 0.0
+    def make_leg(entry_date: date, account_code: str, description: str, debit: float, credit: float) -> tuple[date, str, str, float, float, str, int]:
+        period_id = 1 if entry_date <= date(2025, 3, 31) else 2
+        return (entry_date, account_code, description, debit, credit, "ACME Corp", period_id)
 
+    for batch_index in range(0, total_events, batch_size):
+        rows: list[tuple[date, str, str, float, float, str, int]] = []
+        for _ in range(min(batch_size, total_events - batch_index)):
             entry_date = fake.date_between_dates(start_date, end_date)
-            period_id = 1 if entry_date <= date(2025, 3, 31) else 2
             description = fake.sentence(nb_words=6)
-            rows.append((entry_date, account["account_code"], description, debit, credit, "ACME Corp", period_id))
+            amount = round(random.uniform(100.0, 15_000.0), 2)
+            roll = random.random()
+
+            # Each branch posts a real two-legged, self-balancing transaction
+            # (same amount, opposite sides) so total debits == total credits
+            # globally without needing any post-hoc correction — this is what
+            # "assets balance with liabilities + equity" actually requires.
+            if roll < 0.35:
+                # Revenue: earn cash/receivable against a revenue account.
+                revenue_account = _pick(postable_accounts, "revenue")
+                cash_leg = cash_account if random.random() < 0.6 else ar_account
+                rows.append(make_leg(entry_date, cash_leg["account_code"], description, amount, 0.0))
+                rows.append(make_leg(entry_date, revenue_account["account_code"], description, 0.0, amount))
+            elif roll < 0.70:
+                # Expense: incur a cost, paid from cash or accrued as payable.
+                expense_account = _pick(postable_accounts, "expense")
+                cash_leg = cash_account if random.random() < 0.6 else ap_account
+                rows.append(make_leg(entry_date, expense_account["account_code"], description, amount, 0.0))
+                rows.append(make_leg(entry_date, cash_leg["account_code"], description, 0.0, amount))
+            elif roll < 0.80:
+                # Asset reallocation, e.g. cash into investments.
+                asset_a = _pick(postable_accounts, "asset")
+                asset_b = _pick(postable_accounts, "asset", exclude_name=asset_a["account_name"])
+                rows.append(make_leg(entry_date, asset_a["account_code"], description, amount, 0.0))
+                rows.append(make_leg(entry_date, asset_b["account_code"], description, 0.0, amount))
+            elif roll < 0.90:
+                # Financing: borrow (asset up, liability up) or repay (reverse).
+                asset_account = _pick(postable_accounts, "asset")
+                liability_account = _pick(postable_accounts, "liability")
+                if random.random() < 0.5:
+                    rows.append(make_leg(entry_date, asset_account["account_code"], description, amount, 0.0))
+                    rows.append(make_leg(entry_date, liability_account["account_code"], description, 0.0, amount))
+                else:
+                    rows.append(make_leg(entry_date, liability_account["account_code"], description, amount, 0.0))
+                    rows.append(make_leg(entry_date, asset_account["account_code"], description, 0.0, amount))
+            else:
+                # Equity: raise capital (cash up, equity up) or return capital.
+                equity_account = _pick(postable_accounts, "equity")
+                if random.random() < 0.8:
+                    rows.append(make_leg(entry_date, cash_account["account_code"], description, amount, 0.0))
+                    rows.append(make_leg(entry_date, equity_account["account_code"], description, 0.0, amount))
+                else:
+                    rows.append(make_leg(entry_date, equity_account["account_code"], description, amount, 0.0))
+                    rows.append(make_leg(entry_date, cash_account["account_code"], description, 0.0, amount))
 
         await connection.executemany(
             """
@@ -133,6 +161,51 @@ async def seed_journal_entries(connection: asyncpg.Connection, accounts: list[di
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             """,
             rows,
+        )
+
+
+async def balance_retained_earnings(connection: asyncpg.Connection) -> None:
+    """Set Retained Earnings to each period's net income, so the balance
+    sheet identity (assets == liabilities + equity) holds exactly. This has
+    to run after seed_journal_entries, since it's computed from that data
+    rather than randomly generated."""
+    re_account = await connection.fetchrow(
+        "SELECT account_code FROM chart_of_accounts WHERE account_name = 'Retained Earnings'"
+    )
+    accounts = await connection.fetch("SELECT account_code, category, normal_balance FROM chart_of_accounts")
+    account_meta = {row["account_code"]: row for row in accounts}
+
+    for period_id, period_end in ((1, date(2025, 3, 31)), (2, date(2025, 6, 30))):
+        entries = await connection.fetch(
+            "SELECT account_code, debit, credit FROM journal_entries WHERE period_id = $1",
+            period_id,
+        )
+        net_income = 0.0
+        for entry in entries:
+            meta = account_meta.get(entry["account_code"])
+            if meta is None:
+                continue
+            if meta["category"] == "revenue":
+                net_income += float(entry["credit"]) - float(entry["debit"])
+            elif meta["category"] == "expense":
+                net_income -= float(entry["debit"]) - float(entry["credit"])
+
+        net_income = round(net_income, 2)
+        debit = 0.0 if net_income >= 0 else abs(net_income)
+        credit = net_income if net_income >= 0 else 0.0
+
+        await connection.execute(
+            """
+            INSERT INTO journal_entries (entry_date, account_code, description, debit, credit, entity, period_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            """,
+            period_end,
+            re_account["account_code"],
+            "Period-end retained earnings (net income for the period)",
+            debit,
+            credit,
+            "ACME Corp",
+            period_id,
         )
 
 
@@ -147,7 +220,12 @@ async def main() -> None:
         await connection.execute(schema_sql.read_text(encoding="utf-8"))
         await seed_periods(connection)
         accounts = await seed_accounts(connection)
+        # Idempotent re-runs: journal_entries has no natural dedup key, so
+        # clear it first rather than accumulating duplicate data on top of
+        # whatever a previous run left behind.
+        await connection.execute("TRUNCATE TABLE journal_entries RESTART IDENTITY")
         await seed_journal_entries(connection, accounts)
+        await balance_retained_earnings(connection)
         print("Seed data generation completed successfully")
     finally:
         await connection.close()
