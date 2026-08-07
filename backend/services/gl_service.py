@@ -161,8 +161,12 @@ async def get_balance_sheet(period_id: int) -> dict[str, Any]:
             else:
                 add_account(non_current_assets, name, balance)
         elif category == "liability":
-            if any(token in normalized_name for token in ["payable", "accrued", "debt", "tax", "deferred", "deposit", "lease", "short"]):
-                add_account(current_liabilities, name, balance)
+            # No non-current-liabilities bucket exists in this API's shape,
+            # so every liability account belongs here — unlike assets above,
+            # this branch must not silently drop accounts whose name doesn't
+            # match a keyword (previously true for e.g. "Warranty Liability"
+            # and "Other Liabilities", which broke the balance-sheet identity).
+            add_account(current_liabilities, name, balance)
         elif category == "equity":
             add_account(equity_accounts, name, balance)
 
@@ -329,17 +333,17 @@ async def detect_anomalies(period_id: int) -> list[dict[str, Any]]:
                     "detail": "Account has a negative balance inconsistent with a debit-normal account",
                 }
             )
-        elif metadata.get("normal_balance") == "credit" and current_balance > 0:
+        elif metadata.get("normal_balance") == "credit" and current_balance < 0:
             anomalies.append(
                 {
                     "account": metadata.get("account_name", account_code),
                     "type": "normal_balance_violation",
                     "severity": "medium",
-                    "detail": "Account has a positive balance inconsistent with a credit-normal account",
+                    "detail": "Account has a negative balance inconsistent with a credit-normal account",
                 }
             )
 
-        if metadata.get("category") == "revenue" and current_balance > 0:
+        if metadata.get("category") == "revenue" and current_balance < 0:
             anomalies.append(
                 {
                     "account": metadata.get("account_name", account_code),
