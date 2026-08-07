@@ -1,9 +1,16 @@
 from celery import Celery
 
+try:
+    from core.config import get_settings
+except ModuleNotFoundError:  # pragma: no cover - allows repo-root imports
+    from backend.core.config import get_settings
+
+settings = get_settings()
+
 celery_app = Celery(
     "gl_reporting",
-    broker="redis://redis:6379/0",
-    backend="redis://redis:6379/0",
+    broker=settings.redis_url,
+    backend=settings.redis_url,
     include=["workers.report_tasks"],
 )
 
