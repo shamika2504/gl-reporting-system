@@ -19,10 +19,15 @@ class S3Service:
         self.name = "s3-service"
 
     def _is_placeholder_credential(self, value: str | None) -> bool:
-        return not value or not value.strip() or value.strip().lower() in {"replace-me", "changeme", "your-access-key"}
+        return bool(value) and value.strip().lower() in {"replace-me", "changeme", "your-access-key"}
 
     def _upload_report_sync(self, job_id: str, pdf_bytes: bytes) -> str:
         settings = get_settings()
+        # Empty access_key_id/secret_access_key is the expected, correct state
+        # when running under IRSA (no static keys — boto3's default credential
+        # chain picks up the pod's web identity token automatically). Only a
+        # literal placeholder string means "genuinely not configured"; actual
+        # credential failures are caught by the try/except below instead.
         if self._is_placeholder_credential(settings.aws_access_key_id) or self._is_placeholder_credential(settings.aws_secret_access_key):
             output_dir = Path("/tmp/gl_reporting/reports")
             output_dir.mkdir(parents=True, exist_ok=True)
